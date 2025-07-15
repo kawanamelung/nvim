@@ -96,4 +96,107 @@ vim.api.nvim_create_autocmd('TextYankPost', {
   end,
 })
 
+-- Global variables to track the last buffer and window
+_G.python_output_buf = nil
+_G.python_output_win = nil
+
+function _G.run_python_on_save()
+  -- Get the current file path and escape it properly
+  local filepath = vim.fn.shellescape(vim.fn.expand '%:p')
+
+  -- Run the Python file and capture output
+  local handle = io.popen('python3 ' .. filepath .. ' 2>&1')
+  local result = handle:read '*a'
+  handle:close()
+
+  -- Split the output into lines
+  local lines = vim.split(result, '\n', { trimempty = true })
+
+  -- Calculate buffer size dynamically
+  local max_line_width = 0
+  for _, line in ipairs(lines) do
+    max_line_width = math.max(max_line_width, #line)
+  end
+
+  -- Constrain the buffer dimensions to the output size
+  local buf_width = math.min(max_line_width + 2, math.ceil(vim.o.columns * 0.4))
+  local buf_height = math.min(#lines + 2, math.ceil(vim.o.lines * 0.3))
+
+  -- Close the previous buffer and window if they exist
+  if _G.python_output_buf and vim.api.nvim_buf_is_valid(_G.python_output_buf) then
+    vim.api.nvim_buf_delete(_G.python_output_buf, { force = true })
+    _G.python_output_buf = nil
+  end
+  if _G.python_output_win and vim.api.nvim_win_is_valid(_G.python_output_win) then
+    vim.api.nvim_win_close(_G.python_output_win, true)
+    _G.python_output_win = nil
+  end
+
+  -- Create a temporary buffer for output
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  _G.python_output_buf = buf -- Store the new buffer reference
+
+  -- Define border characters similar to Telescope
+  local border_chars = { '╭', '─', '╮', '│', '╯', '─', '╰', '│' }
+  -- Enable line wrapping in the buffer
+  -- Open the buffer in a floating window
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = 'editor',
+    width = buf_width,
+    height = buf_height,
+    col = vim.o.columns - buf_width - 2, -- Align to the right
+    row = 1, -- Position at the top
+    style = 'minimal',
+    border = border_chars, -- Telescope-style border
+  })
+  _G.python_output_win = win -- Store the new window reference
+
+  vim.api.nvim_buf_set_option(buf, 'wrap', true)
+  -- -- Force focus to the floating window
+  -- vim.defer_fn(function()
+  --   vim.api.nvim_set_current_win(win)
+  -- end, 10) -- Defer the focus slightly to ensure correct behavior
+
+  -- Close the floating buffer with 'q'
+  vim.api.nvim_buf_set_keymap(buf, 'n', 'q', ':q<CR>', { noremap = true, silent = true })
+end
+
+-- Toggle Python run on save
+function _G.toggle_python_run_on_save()
+  if vim.g.python_autorun_enabled then
+    -- Remove the existing autocommand group
+    vim.cmd 'autocmd! PythonRunOnSave'
+    vim.g.python_autorun_enabled = false
+    print 'Python run on save disabled'
+  else
+    -- Define a new autocommand group
+    vim.cmd [[
+      augroup PythonRunOnSave
+        autocmd!
+        autocmd BufWritePost *.py lua _G.run_python_on_save()
+      augroup END
+    ]]
+    vim.g.python_autorun_enabled = true
+    print 'Python run on save enabled'
+  end
+end
+
+-- Map the toggle function to a keymap
+vim.api.nvim_set_keymap('n', '<leader>0', '<cmd>lua _G.toggle_python_run_on_save()<CR>', { noremap = true, silent = true })
+
+_G.toggle_autocomplete = function()
+  local cmp = require 'cmp'
+  autocomplete_enabled = not (autocomplete_enabled or false)
+  cmp.setup {
+    completion = {
+      autocomplete = autocomplete_enabled and { require('cmp.types').cmp.TriggerEvent.TextChanged } or false,
+    },
+  }
+  print('Autocomplete ' .. (autocomplete_enabled and 'Enabled' or 'Disabled'))
+end
+
+-- Map the toggle function to <leader>da
+vim.api.nvim_set_keymap('n', '<leader>da', ':lua toggle_autocomplete()<CR>', { noremap = true, silent = true })
+
 -- vim: ts=2 sts=2 sw=2 et
